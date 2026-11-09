@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from urllib.parse import quote
 
 import requests
+from edge_health import validated_edge_hosts
 
 for _stream in (sys.stdout, sys.stderr):
     try:
@@ -269,8 +270,10 @@ def get_combined_edge_hosts():
             seen.add(h)
             combined.append(h)
 
-    log("EDGE POOL", f"汇总入口地址池: 静态域名 {len(static_hosts)} 个, API 获取 {len(api_hosts)} 个, 合并有效入口共 {len(combined)} 个")
-    return combined if combined else EDGE_HOSTS
+    log("EDGE POOL", f"候选入口: 静态 {len(static_hosts)} 个, API {len(api_hosts)} 个; 尚未验证")
+    verified = validated_edge_hosts(combined, os.environ.get("EDGE_SNI", ""))
+    log("EDGE POOL", f"通过 Cloudflare 地址归属、TLS 证书和两轮 Worker WebSocket 检查的入口: {len(verified)} 个")
+    return verified
 
 # ---------------------------------------------------------------------------
 # 筛选 SSTP 节点
