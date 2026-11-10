@@ -35,6 +35,11 @@ jobs:
           PY
         env:
           EDGE_SNI: "edgesuidao.keeanzhong.cc.cd"
+      - name: Validate CFNext ingress without publishing
+        run: python cfnext_ingress.py /tmp/cfnext-ingress.txt
+        env:
+          CFNEXT_SNI: "githubnextip.keeanzhong1s.cc.cd"
+          PREFLIGHT_ONLY: "1"
   check:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -59,6 +64,11 @@ jobs:
           CHECK_CONCURRENCY: "32"
           CHECK_TIMEOUT: "90"
           EDGE_SNI: "edgesuidao.keeanzhong.cc.cd"
+
+      - name: Build independent verified CFNext ingress feed
+        run: python cfnext_ingress.py public/cfnext-ingress.txt
+        env:
+          CFNEXT_SNI: "githubnextip.keeanzhong1s.cc.cd"
 
       - name: Ensure GitHub Pages is enabled (one-time auto setup)
         run: |
