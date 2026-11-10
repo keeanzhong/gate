@@ -1,13 +1,37 @@
 """Publish a credential-free, Worker-specific CFNext ingress source."""
 import os
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+import hashlib
+import http.client
+import socket
+import ssl
+import time
 
 import requests
 
-from edge_health import is_cf_ipv4, validated_edge_hosts
+from edge_health import is_cf_ipv4, candidate_addresses
 from vpngate import EDGE_HOSTS, OPTIMAL_API, fetch_optimal_api_endpoints
 
 PREVIOUS_URL = 'https://keeanzhong.github.io/gate/cfnext-ingress.txt'
+ROOT_RESPONSE_SHA256 = '2938e9f1284180959e33ab1718d0793a72ff6e4cdb8108c34dcd14e69446de5c'
+
+
+def probe_public_root(address, worker_host):
+    # CFNext requires the private VLESS path for WebSocket upgrades. Never copy
+    # that credential into a public workflow. Verify its exact public response
+    # here; authenticated end-to-end transfers are a separate local acceptance.
+    started = time.monotonic()
+    with socket.create_connection((address, 443), timeout=5) as tcp:
+        with ssl.create_default_context().wrap_socket(tcp, server_hostname=worker_host) as tls:
+            tls.settimeout(5)
+            tls.sendall((f'GET / HTTP/1.1\r\nHost: {worker_host}\r\nConnection: close\r\n\r\n').encode())
+            response = http.client.HTTPResponse(tls)
+            response.begin()
+            body = response.read(65536)
+            if response.status != 403 or hashlib.sha256(body).hexdigest() != ROOT_RESPONSE_SHA256:
+                raise ValueError('Unexpected CFNext public root response')
+    return round((time.monotonic() - started) * 1000)
 
 
 def parse_published(value):
@@ -20,10 +44,30 @@ def parse_published(value):
 
 
 def build(worker_host):
+    if not worker_host or any(c in worker_host for c in '/:@\r\n '):
+        raise ValueError('CFNEXT_SNI must name the actual Worker')
     # Include known CF addresses as seeds, but never publish without two upgrades.
     candidates = EDGE_HOSTS + fetch_optimal_api_endpoints(OPTIMAL_API)
     candidates += ['104.17.152.26:443', '104.18.43.26:443', '172.64.144.230:443']
-    return validated_edge_hosts(candidates, worker_host, limit=6)
+    def resolve(endpoint):
+        try:
+            return candidate_addresses(endpoint)
+        except (ValueError, OSError, requests.RequestException):
+            return []
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        addresses = sorted({a for values in pool.map(resolve, candidates) for a in values})
+    def check(address):
+        try:
+            return address, max(probe_public_root(address, worker_host),
+                                probe_public_root(address, worker_host))
+        except (ValueError, OSError, ssl.SSLError, http.client.HTTPException):
+            return None
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        healthy = [r for r in pool.map(check, addresses) if r]
+    healthy.sort(key=lambda item: (item[1], item[0]))
+    if not healthy:
+        raise RuntimeError('No verified CFNext public ingress; preserve previous feed')
+    return [f'{address}:443' for address, latency in healthy[:6]]
 
 
 def publish(output, worker_host, allow_previous=True):
