@@ -14,7 +14,9 @@ from edge_health import is_cf_ipv4, candidate_addresses
 from vpngate import EDGE_HOSTS, OPTIMAL_API, fetch_optimal_api_endpoints
 
 PREVIOUS_URL = 'https://keeanzhong.github.io/gate/cfnext-ingress.txt'
-ROOT_RESPONSE_SHA256 = '2938e9f1284180959e33ab1718d0793a72ff6e4cdb8108c34dcd14e69446de5c'
+ROOT_RESPONSE_SHA256 = '60dd610a74e2e7ef7d5eb8fe04f4b414d63e6932a09f7860a69a9549eae361b4'
+USER_AGENT = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+              '(KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36')
 
 
 def probe_public_root(address, worker_host):
@@ -25,11 +27,12 @@ def probe_public_root(address, worker_host):
     with socket.create_connection((address, 443), timeout=5) as tcp:
         with ssl.create_default_context().wrap_socket(tcp, server_hostname=worker_host) as tls:
             tls.settimeout(5)
-            tls.sendall((f'GET / HTTP/1.1\r\nHost: {worker_host}\r\nConnection: close\r\n\r\n').encode())
+            tls.sendall((f'GET / HTTP/1.1\r\nHost: {worker_host}\r\nUser-Agent: {USER_AGENT}\r\n'
+                         'Accept: text/html\r\nConnection: close\r\n\r\n').encode())
             response = http.client.HTTPResponse(tls)
             response.begin()
             body = response.read(65536)
-            if response.status != 403 or hashlib.sha256(body).hexdigest() != ROOT_RESPONSE_SHA256:
+            if response.status != 200 or hashlib.sha256(body).hexdigest() != ROOT_RESPONSE_SHA256:
                 raise ValueError('Unexpected CFNext public root response')
     return round((time.monotonic() - started) * 1000)
 
